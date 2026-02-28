@@ -361,10 +361,17 @@ def _create_text_solids(params):
 
     y_positions = _calc_line_positions(line_data, params.line_spacing)
 
+    # Underline sits at the baseline. Empirically measured: for CadQuery text
+    # with valign="center", the baseline is at ~0.33 (Arial) to ~0.36 (Cambria)
+    # of font_size below center. Using 0.35 as a cross-font compromise.
+    UL_Y_OFFSET = 0.35  # fraction of font_size below center
+
     solids = []
 
     if params.styled_lines is not None:
-        # Per-run styling
+        # Per-run styling: group consecutive runs by (bold, italic) into
+        # text groups so each group is a single text() call.  Underlines
+        # are drawn separately as rectangles (they aren't a font property).
         data_idx = 0
         for line_idx in non_empty_indices:
             runs = params.styled_lines[line_idx]
@@ -372,42 +379,90 @@ def _create_text_solids(params):
             y = y_positions[data_idx]
             data_idx += 1
 
-            # Compute total line width for centering
-            total_w = sum(len(run.text) * CHAR_WIDTH_RATIO * font_size for run in runs)
-            x = -total_w / 2
-
+            # Merge consecutive runs with same (bold, italic) into text groups
+            groups = []  # [(merged_text, bold, italic, [(run_text, underline), ...])]
             for run in runs:
                 if not run.text:
                     continue
-                run_w = len(run.text) * CHAR_WIDTH_RATIO * font_size
-                run_cx = x + run_w / 2
+                key = (run.bold, run.italic)
+                if groups and (groups[-1][1], groups[-1][2]) == key:
+                    groups[-1][0] += run.text
+                    groups[-1][3].append((run.text, run.underline))
+                else:
+                    groups.append([run.text, run.bold, run.italic,
+                                   [(run.text, run.underline)]])
 
-                kwargs = _text_kwargs_for_style(params.font, run.bold, run.italic)
-                kwargs["halign"] = "center"
-                kwargs["valign"] = "center"
+            if not groups:
+                continue
 
+            # If there's only one text group, render centered (no CHAR_WIDTH_RATIO error)
+            if len(groups) == 1:
+                g_text, g_bold, g_italic, g_runs = groups[0]
+                kwargs = _text_kwargs_for_style(params.font, g_bold, g_italic)
                 try:
                     solid = (
                         cq.Workplane("XY")
-                        .center(run_cx, y)
-                        .text(run.text, font_size, params.text_depth, **kwargs)
+                        .center(0, y)
+                        .text(g_text, font_size, params.text_depth, **kwargs)
                     )
                     solids.append(solid)
                 except Exception as e:
-                    print(f"Warning: Could not render run '{run.text}': {e}", file=sys.stderr)
+                    print(f"Warning: Could not render text '{g_text}': {e}", file=sys.stderr)
 
-                if run.underline:
-                    ul_thickness = max(0.4, font_size * 0.06)
-                    ul_y = y - font_size * 0.38
-                    ul = (
-                        cq.Workplane("XY")
-                        .center(run_cx, ul_y)
-                        .rect(run_w, ul_thickness)
-                        .extrude(params.text_depth)
-                    )
-                    solids.append(ul)
+                # Underline rectangles per sub-run
+                full_w = len(g_text) * CHAR_WIDTH_RATIO * font_size
+                char_x = -full_w / 2
+                for sub_text, sub_ul in g_runs:
+                    sub_w = len(sub_text) * CHAR_WIDTH_RATIO * font_size
+                    if sub_ul:
+                        ul_thickness = max(0.4, font_size * 0.06)
+                        ul_y = y - font_size * UL_Y_OFFSET
+                        ul = (
+                            cq.Workplane("XY")
+                            .center(char_x + sub_w / 2, ul_y)
+                            .rect(sub_w, ul_thickness)
+                            .extrude(params.text_depth)
+                        )
+                        solids.append(ul)
+                    char_x += sub_w
+            else:
+                # Multiple font-style groups: position each using CHAR_WIDTH_RATIO
+                full_text = "".join(g[0] for g in groups)
+                total_w = len(full_text) * CHAR_WIDTH_RATIO * font_size
+                x = -total_w / 2
 
-                x += run_w
+                for g_text, g_bold, g_italic, g_runs in groups:
+                    g_w = len(g_text) * CHAR_WIDTH_RATIO * font_size
+                    g_cx = x + g_w / 2
+
+                    kwargs = _text_kwargs_for_style(params.font, g_bold, g_italic)
+                    try:
+                        solid = (
+                            cq.Workplane("XY")
+                            .center(g_cx, y)
+                            .text(g_text, font_size, params.text_depth, **kwargs)
+                        )
+                        solids.append(solid)
+                    except Exception as e:
+                        print(f"Warning: Could not render text '{g_text}': {e}", file=sys.stderr)
+
+                    # Underline rectangles per sub-run within this group
+                    char_x = x
+                    for sub_text, sub_ul in g_runs:
+                        sub_w = len(sub_text) * CHAR_WIDTH_RATIO * font_size
+                        if sub_ul:
+                            ul_thickness = max(0.4, font_size * 0.06)
+                            ul_y = y - font_size * UL_Y_OFFSET
+                            ul = (
+                                cq.Workplane("XY")
+                                .center(char_x + sub_w / 2, ul_y)
+                                .rect(sub_w, ul_thickness)
+                                .extrude(params.text_depth)
+                            )
+                            solids.append(ul)
+                        char_x += sub_w
+
+                    x += g_w
     else:
         # Global styling (CLI mode)
         text_kwargs = _text_kwargs_for_style(params.font, params.bold, params.italic)
@@ -427,7 +482,7 @@ def _create_text_solids(params):
             if params.underline:
                 text_w = font_size * len(text) * CHAR_WIDTH_RATIO
                 ul_thickness = max(0.4, font_size * 0.06)
-                ul_y = y - font_size * 0.38
+                ul_y = y - font_size * UL_Y_OFFSET
                 ul = (
                     cq.Workplane("XY")
                     .center(0, ul_y)

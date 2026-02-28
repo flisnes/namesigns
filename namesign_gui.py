@@ -488,7 +488,6 @@ class ParameterPanel(QWidget):
             ("Width", "width_spin", 40, 300, 180, 0, 5),
             ("Height", "height_spin", 20, 200, 120, 0, 5),
             ("Thickness", "thickness_spin", 1, 10, 3.0, 1, 0.5),
-            ("Text depth", "text_depth_spin", 0.2, 2.0, 0.6, 1, 0.1),
         ]:
             row = QHBoxLayout()
             row.addWidget(QLabel(label_text))
@@ -497,7 +496,41 @@ class ParameterPanel(QWidget):
             row.addWidget(sb)
             layout.addLayout(row)
 
+        # Black layer depth with layer count hint
+        depth_row = QHBoxLayout()
+        depth_row.addWidget(QLabel("Black depth"))
+        self.text_depth_spin = self._make_spinbox(0.1, 2.0, 0.2, 2, 0.05)
+        self.text_depth_spin.setToolTip("Thickness of the black piece (text + border)")
+        depth_row.addWidget(self.text_depth_spin)
+        layout.addLayout(depth_row)
+
+        layer_row = QHBoxLayout()
+        layer_row.addWidget(QLabel("Layer height"))
+        self.layer_height_spin = QDoubleSpinBox()
+        self.layer_height_spin.setRange(0.05, 0.6)
+        self.layer_height_spin.setDecimals(2)
+        self.layer_height_spin.setSingleStep(0.05)
+        self.layer_height_spin.setValue(0.20)
+        self.layer_height_spin.setSuffix(" mm")
+        self.layer_height_spin.setToolTip("Slicer layer height (informational, for layer count)")
+        layer_row.addWidget(self.layer_height_spin)
+        layout.addLayout(layer_row)
+
+        self.layer_count_label = QLabel()
+        self.layer_count_label.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.layer_count_label)
+        self.text_depth_spin.valueChanged.connect(self._update_layer_count)
+        self.layer_height_spin.valueChanged.connect(self._update_layer_count)
+        self._update_layer_count()
+
         self._layout.addWidget(group)
+
+    def _update_layer_count(self):
+        depth = self.text_depth_spin.value()
+        lh = self.layer_height_spin.value()
+        if lh > 0:
+            layers = depth / lh
+            self.layer_count_label.setText(f"  = {layers:.1f} layers")
 
     def _create_border_group(self):
         group = QGroupBox("Border")
