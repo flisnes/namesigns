@@ -5,6 +5,7 @@ Name Sign Generator - PySide6 GUI.
 Live 2D preview with QPainter, exports STLs via CadQuery in a background thread.
 """
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -39,6 +40,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QTextCharFormat,
+    QTextCursor,
 )
 
 from namesign import SignParams, StyledRun, auto_font_sizes, _calc_line_positions, CHAR_WIDTH_RATIO
@@ -621,6 +623,42 @@ class ParameterPanel(QWidget):
             line_spacing=self.line_spacing_spin.value(),
         )
 
+    def set_params(self, params):
+        """Restore all UI state from a SignParams."""
+        # Block signals to avoid triggering preview updates for each widget change
+        self.blockSignals(True)
+
+        self.width_spin.setValue(params.width)
+        self.height_spin.setValue(params.height)
+        self.thickness_spin.setValue(params.thickness)
+        self.text_depth_spin.setValue(params.text_depth)
+        self.corner_radius_spin.setValue(params.corner_radius)
+        self.border_offset_spin.setValue(params.border_offset)
+        self.border_width_spin.setValue(params.border_width)
+        self.line_spacing_spin.setValue(params.line_spacing)
+
+        self.font_combo.setCurrentFont(QFont(params.font))
+
+        border_styles = ["concave", "rounded", "none"]
+        if params.border_style in border_styles:
+            self.border_style_combo.setCurrentIndex(border_styles.index(params.border_style))
+
+        # Restore rich text from styled_lines
+        self.text_edit.clear()
+        cursor = self.text_edit.textCursor()
+        for line_idx, runs in enumerate(params.styled_lines or []):
+            if line_idx > 0:
+                cursor.insertBlock()
+            for run in runs:
+                fmt = QTextCharFormat()
+                fmt.setFontWeight(QFont.Bold if run.bold else QFont.Normal)
+                fmt.setFontItalic(run.italic)
+                fmt.setFontUnderline(run.underline)
+                cursor.insertText(run.text, fmt)
+
+        self.blockSignals(False)
+        self._on_changed()
+
 
 # ---------------------------------------------------------------------------
 # Export thread
@@ -679,7 +717,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
 
         self.export_thread = None
+        self.presets_dir = Path(__file__).parent / "presets"
+        self.presets_dir.mkdir(exist_ok=True)
 
+        self._setup_menu()
         self._setup_central_widget()
         self._setup_status_bar()
 
@@ -707,11 +748,49 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 600])
         layout.addWidget(splitter)
 
+    def _setup_menu(self):
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+
+        open_action = file_menu.addAction("&Open Preset...")
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self._on_open_preset)
+
+        save_action = file_menu.addAction("&Save Preset...")
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._on_save_preset)
+
     def _setup_status_bar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_label = QLabel("Ready")
         self.status_bar.addWidget(self.status_label, stretch=1)
+
+    def _on_save_preset(self):
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Save Preset",
+            str(self.presets_dir / "my_sign.json"), "JSON Files (*.json)")
+        if not filename:
+            return
+        params = self.parameter_panel.get_params()
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(params.to_dict(), f, indent=2, ensure_ascii=False)
+        self.status_label.setText(f"Saved: {Path(filename).name}")
+
+    def _on_open_preset(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Open Preset",
+            str(self.presets_dir), "JSON Files (*.json)")
+        if not filename:
+            return
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            params = SignParams.from_dict(data)
+            self.parameter_panel.set_params(params)
+            self.status_label.setText(f"Loaded: {Path(filename).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load preset:\n\n{e}")
 
     def _update_preview(self):
         params = self.parameter_panel.get_params()

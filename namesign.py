@@ -31,6 +31,13 @@ class StyledRun:
     italic: bool = False
     underline: bool = False
 
+    def to_dict(self):
+        return {"text": self.text, "bold": self.bold, "italic": self.italic, "underline": self.underline}
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(text=d["text"], bold=d.get("bold", False), italic=d.get("italic", False), underline=d.get("underline", False))
+
 
 @dataclass
 class SignParams:
@@ -53,6 +60,42 @@ class SignParams:
     border_width: float = 2.0
     line_spacing: float = 1.3
     output: str = "namesign"
+
+    def to_dict(self):
+        return {
+            "styled_lines": [[r.to_dict() for r in line] for line in self.styled_lines] if self.styled_lines else None,
+            "font": self.font,
+            "width": self.width,
+            "height": self.height,
+            "thickness": self.thickness,
+            "text_depth": self.text_depth,
+            "border_style": self.border_style,
+            "corner_radius": self.corner_radius,
+            "border_offset": self.border_offset,
+            "border_width": self.border_width,
+            "line_spacing": self.line_spacing,
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        styled_lines = None
+        if d.get("styled_lines"):
+            styled_lines = [[StyledRun.from_dict(r) for r in line] for line in d["styled_lines"]]
+        lines = ["".join(r.text for r in line) for line in styled_lines] if styled_lines else [""]
+        return cls(
+            lines=lines,
+            styled_lines=styled_lines,
+            font=d.get("font", "Arial"),
+            width=d.get("width", 180.0),
+            height=d.get("height", 120.0),
+            thickness=d.get("thickness", 3.0),
+            text_depth=d.get("text_depth", 0.6),
+            border_style=d.get("border_style", "concave"),
+            corner_radius=d.get("corner_radius", 12.0),
+            border_offset=d.get("border_offset", 6.0),
+            border_width=d.get("border_width", 2.0),
+            line_spacing=d.get("line_spacing", 1.3),
+        )
 
 
 def _clamp_radius(r, w, h):
